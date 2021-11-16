@@ -1,18 +1,18 @@
 [
     {
-        "name":  "mailboxesToRemove",
-        "value":  "{{form.permissionList.rightToLeft.toJsonString}}"
-    },
-    {
         "name":  "identity",
         "value":  "{{form.gridUser.id}}"
     },
     {
-        "name":  "permission",
-        "value":  "{{form.permission}}"
-    },
-    {
         "name":  "mailboxesToAdd",
         "value":  "{{form.permissionList.leftToRight.toJsonString}}"
+    },
+    {
+        "name":  "mailboxesToRemove",
+        "value":  "{{form.permissionList.rightToLeft.toJsonString}}"
+    },
+    {
+        "name":  "permission",
+        "value":  "{{form.permission}}"
     }
 ]
