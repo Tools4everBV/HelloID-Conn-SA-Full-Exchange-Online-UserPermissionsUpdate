@@ -6,7 +6,7 @@
 $portalUrl = "https://CUSTOMER.helloid.com"
 $apiKey = "API_KEY"
 $apiSecret = "API_SECRET"
-$delegatedFormAccessGroupNames = @("Users") #Only unique names are supported. Groups must exist!
+$delegatedFormAccessGroupNames = @("") #Only unique names are supported. Groups must exist!
 $delegatedFormCategories = @("Exchange Online") #Only unique names are supported. Categories will be created if not exists
 $script:debugLogging = $false #Default value: $false. If $true, the HelloID resource GUIDs will be shown in the logging
 $script:duplicateForm = $false #Default value: $false. If $true, the HelloID resource names will be changed to import a duplicate Form
@@ -95,7 +95,7 @@ function Invoke-HelloIDGlobalVariable {
                 secret   = $Secret;
                 ItemType = 0;
             }    
-            $body = ConvertTo-Json -InputObject $body
+            $body = ConvertTo-Json -InputObject $body -Depth 100
     
             $uri = ($script:PortalBaseUrl + "api/v1/automation/variable")
             $response = Invoke-RestMethod -Method Post -Uri $uri -Headers $script:headers -ContentType "application/json" -Verbose:$false -Body $body
@@ -141,7 +141,7 @@ function Invoke-HelloIDAutomationTask {
                 objectGuid          = $ObjectGuid;
                 variables           = (ConvertFrom-Json-WithEmptyArray($Variables));
             }
-            $body = ConvertTo-Json -InputObject $body
+            $body = ConvertTo-Json -InputObject $body -Depth 100
     
             $uri = ($script:PortalBaseUrl +"api/v1/automationtasks/powershell")
             $response = Invoke-RestMethod -Method Post -Uri $uri -Headers $script:headers -ContentType "application/json" -Verbose:$false -Body $body
@@ -196,7 +196,7 @@ function Invoke-HelloIDDatasource {
                 script             = $DatasourcePsScript;
                 input              = (ConvertFrom-Json-WithEmptyArray($DatasourceInput));
             }
-            $body = ConvertTo-Json -InputObject $body
+            $body = ConvertTo-Json -InputObject $body -Depth 100
       
             $uri = ($script:PortalBaseUrl +"api/v1/datasource")
             $response = Invoke-RestMethod -Method Post -Uri $uri -Headers $script:headers -ContentType "application/json" -Verbose:$false -Body $body
@@ -261,10 +261,11 @@ function Invoke-HelloIDDelegatedForm {
     param(
         [parameter(Mandatory)][String]$DelegatedFormName,
         [parameter(Mandatory)][String]$DynamicFormGuid,
-        [parameter()][String][AllowEmptyString()]$AccessGroups,
+        [parameter()][Array][AllowEmptyString()]$AccessGroups,
         [parameter()][String][AllowEmptyString()]$Categories,
         [parameter(Mandatory)][String]$UseFaIcon,
         [parameter()][String][AllowEmptyString()]$FaIcon,
+        [parameter()][String][AllowEmptyString()]$task,
         [parameter(Mandatory)][Ref]$returnObject
     )
     $delegatedFormCreated = $false
@@ -284,11 +285,16 @@ function Invoke-HelloIDDelegatedForm {
                 name            = $DelegatedFormName;
                 dynamicFormGUID = $DynamicFormGuid;
                 isEnabled       = "True";
-                accessGroups    = (ConvertFrom-Json-WithEmptyArray($AccessGroups));
                 useFaIcon       = $UseFaIcon;
                 faIcon          = $FaIcon;
-            }    
-            $body = ConvertTo-Json -InputObject $body
+                task            = ConvertFrom-Json -inputObject $task;
+            }
+            if(-not[String]::IsNullOrEmpty($AccessGroups)) { 
+                $body += @{
+                    accessGroups    = (ConvertFrom-Json-WithEmptyArray($AccessGroups));
+                }
+            }
+            $body = ConvertTo-Json -InputObject $body -Depth 100
     
             $uri = ($script:PortalBaseUrl +"api/v1/delegatedforms")
             $response = Invoke-RestMethod -Method Post -Uri $uri -Headers $script:headers -ContentType "application/json" -Verbose:$false -Body $body
@@ -313,6 +319,8 @@ function Invoke-HelloIDDelegatedForm {
     $returnObject.value.guid = $delegatedFormGuid
     $returnObject.value.created = $delegatedFormCreated
 }
+
+
 <# Begin: HelloID Global Variables #>
 foreach ($item in $globalHelloIDVariables) {
 	Invoke-HelloIDGlobalVariable -Name $item.name -Value $item.value -Secret $item.secret 
@@ -558,25 +566,31 @@ Invoke-HelloIDDynamicForm -FormName $dynamicFormName -FormSchema $tmpSchema  -re
 
 <# Begin: Delegated Form Access Groups and Categories #>
 $delegatedFormAccessGroupGuids = @()
-foreach($group in $delegatedFormAccessGroupNames) {
-    try {
-        $uri = ($script:PortalBaseUrl +"api/v1/groups/$group")
-        $response = Invoke-RestMethod -Method Get -Uri $uri -Headers $script:headers -ContentType "application/json" -Verbose:$false
-        $delegatedFormAccessGroupGuid = $response.groupGuid
-        $delegatedFormAccessGroupGuids += $delegatedFormAccessGroupGuid
-        
-        Write-Information "HelloID (access)group '$group' successfully found$(if ($script:debugLogging -eq $true) { ": " + $delegatedFormAccessGroupGuid })"
-    } catch {
-        Write-Error "HelloID (access)group '$group', message: $_"
+if(-not[String]::IsNullOrEmpty($delegatedFormAccessGroupNames)){
+    foreach($group in $delegatedFormAccessGroupNames) {
+        try {
+            $uri = ($script:PortalBaseUrl +"api/v1/groups/$group")
+            $response = Invoke-RestMethod -Method Get -Uri $uri -Headers $script:headers -ContentType "application/json" -Verbose:$false
+            $delegatedFormAccessGroupGuid = $response.groupGuid
+            $delegatedFormAccessGroupGuids += $delegatedFormAccessGroupGuid
+            
+            Write-Information "HelloID (access)group '$group' successfully found$(if ($script:debugLogging -eq $true) { ": " + $delegatedFormAccessGroupGuid })"
+        } catch {
+            Write-Error "HelloID (access)group '$group', message: $_"
+        }
+    }
+    if($null -ne $delegatedFormAccessGroupGuids){
+        $delegatedFormAccessGroupGuids = ($delegatedFormAccessGroupGuids | Select-Object -Unique | ConvertTo-Json -Depth 100 -Compress)
     }
 }
-$delegatedFormAccessGroupGuids = ($delegatedFormAccessGroupGuids | Select-Object -Unique | ConvertTo-Json -Compress)
 
 $delegatedFormCategoryGuids = @()
 foreach($category in $delegatedFormCategories) {
     try {
         $uri = ($script:PortalBaseUrl +"api/v1/delegatedformcategories/$category")
         $response = Invoke-RestMethod -Method Get -Uri $uri -Headers $script:headers -ContentType "application/json" -Verbose:$false
+        $response = $response | Where-Object {$_.name.en -eq $category}
+        
         $tmpGuid = $response.delegatedFormCategoryGuid
         $delegatedFormCategoryGuids += $tmpGuid
         
@@ -586,7 +600,7 @@ foreach($category in $delegatedFormCategories) {
         $body = @{
             name = @{"en" = $category};
         }
-        $body = ConvertTo-Json -InputObject $body
+        $body = ConvertTo-Json -InputObject $body -Depth 100
 
         $uri = ($script:PortalBaseUrl +"api/v1/delegatedformcategories")
         $response = Invoke-RestMethod -Method Post -Uri $uri -Headers $script:headers -ContentType "application/json" -Verbose:$false -Body $body
@@ -596,7 +610,7 @@ foreach($category in $delegatedFormCategories) {
         Write-Information "HelloID Delegated Form category '$category' successfully created$(if ($script:debugLogging -eq $true) { ": " + $tmpGuid })"
     }
 }
-$delegatedFormCategoryGuids = (ConvertTo-Json -InputObject $delegatedFormCategoryGuids -Compress)
+$delegatedFormCategoryGuids = (ConvertTo-Json -InputObject $delegatedFormCategoryGuids -Depth 100 -Compress)
 <# End: Delegated Form Access Groups and Categories #>
 
 <# Begin: Delegated Form #>
@@ -604,108 +618,10 @@ $delegatedFormRef = [PSCustomObject]@{guid = $null; created = $null}
 $delegatedFormName = @'
 Exchange online - User - Manage permissions
 '@
-Invoke-HelloIDDelegatedForm -DelegatedFormName $delegatedFormName -DynamicFormGuid $dynamicFormGuid -AccessGroups $delegatedFormAccessGroupGuids -Categories $delegatedFormCategoryGuids -UseFaIcon "True" -FaIcon "fa fa-pencil-square-o" -returnObject ([Ref]$delegatedFormRef) 
-<# End: Delegated Form #>
-
-<# Begin: Delegated Form Task #>
-if($delegatedFormRef.created -eq $true) { 
-	$tmpScript = @'
-# Fixed values
-$AutoMapping = $false
-
-try {
-    # Set TLS to accept TLS, TLS 1.1 and TLS 1.2
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12
-
-    # Connect to Office 365
-    try{
-        Hid-Write-Status -Event Information -Message "Connecting to Office 365.."
-
-        $module = Import-Module ExchangeOnlineManagement
-
-        $securePassword = ConvertTo-SecureString $ExchangeOnlineAdminPassword -AsPlainText -Force
-        $credential = [System.Management.Automation.PSCredential]::new($ExchangeOnlineAdminUsername,$securePassword)
-
-        $exchangeSession = Connect-ExchangeOnline -Credential $credential -ShowBanner:$false -ShowProgress:$false -TrackPerformance:$false -ErrorAction Stop 
-
-        Hid-Write-Status -Event Information -Message "Successfully connected to Office 365"
-    }catch{
-        Write-Error "Could not connect to Exchange Online, error: $_"
-    }
-
-    Hid-Write-Status -Event Information -Message "Checking if user with identity '$($identity)' exists"
-    $user = Get-User -Identity $identity -ErrorAction Stop
-    if ($user.Name.Count -eq 0) {
-        throw "Could not find user with identity '$($identity)'"
-    }
-
-    # Add permissions to users
-    try { 
-        HID-Write-Status -Event Information -Message "Adding permission $($permission) to user $($identity) for $mailboxesToAdd" 
-        $mailboxesToAddJson = $mailboxesToAdd | ConvertFrom-Json
-        foreach ($mailbox in $mailboxesToAddJson.id) {
-            if($permission.ToLower() -eq "fullaccess"){
-                if($AutoMapping){
-                    Add-MailboxPermission -Identity $mailbox -AccessRights FullAccess -InheritanceType All -AutoMapping:$true -User $user.id -ErrorAction Stop
-                }else{
-                    Add-MailboxPermission -Identity $mailbox -AccessRights FullAccess -InheritanceType All -AutoMapping:$false -User $user.id -ErrorAction Stop
-                }
-            }elseif($permission.ToLower() -eq "sendas"){
-                Add-RecipientPermission -Identity $mailbox -AccessRights SendAs -Confirm:$false -Trustee $User.id -ErrorAction Stop
-            }elseif($permission.ToLower() -eq "sendonbehalf"){
-                Set-Mailbox -Identity $mailbox -GrantSendOnBehalfTo @{add="$($user.id)"} -Confirm:$false -ErrorAction Stop
-            }else{
-                throw "Could not match right '$($permission)' to FullAccess, SendAs or SendOnBehalf"
-            }
-            HID-Write-Status -Event Success -Message "Added permission $($permission) to user $($identity) for $mailbox"
-            HID-Write-Summary -Event Success -Message "Added permission $($permission) to user $($identity) for $mailbox"
-        }
-    } catch {
-        HID-Write-Status -Event Error -Message "Error adding permission $($permission) to user $($identity) for $mailbox . Error: $_"
-        HID-Write-Summary -Event Failed -Message "Error adding permission $($permission) to user $($identity) for $mailbox"
-    }
-
-    # Remove permissions from users
-    try { 
-        HID-Write-Status -Event Information -Message "Removing permission $($permission) to user $($identity) for $mailboxesToRemove" 
-        $mailboxesToRemoveJson = $mailboxesToRemove | ConvertFrom-Json
-        foreach ($mailbox in $mailboxesToRemoveJson.id) {
-            if($permission.ToLower() -eq "fullaccess"){
-                Remove-MailboxPermission -Identity $mailbox -AccessRights FullAccess -InheritanceType All -User $User.id -Confirm:$false -ErrorAction Stop
-            }elseif($permission.ToLower() -eq "sendas"){
-                Remove-RecipientPermission -Identity $mailbox -AccessRights SendAs -Confirm:$false -Trustee $User.id -ErrorAction Stop
-            }elseif($permission.ToLower() -eq "sendonbehalf"){
-                Set-Mailbox -Identity $mailbox -GrantSendOnBehalfTo @{remove="$($user.id)"} -Confirm:$false -ErrorAction Stop
-            }else{
-                throw "Could not match right '$($permission)' to FullAccess, SendAs or SendOnBehalf"
-            }
-            HID-Write-Status -Event Success -Message "Removed permission $($permission) to user $($identity) for $mailbox"
-            HID-Write-Summary -Event Success -Message "Removed permission $($permission) to user $($identity) for $mailbox"          
-        }
-    } catch {
-        HID-Write-Status -Event Error -Message "Error removing permission $($permission) to user $($identity) for $mailbox . Error: $_"
-        HID-Write-Summary -Event Failed -Message "Error removing permission $($permission) to user $($identity) for $mailbox"
-    }
-} catch {
-    HID-Write-Status -Message "Error updating permission $($permission) to user $($identity). Error: $_" -Event Error
-    HID-Write-Summary -Message "Error updating permission $($permission) to user $($identity)." -Event Failed
-} finally {
-    Hid-Write-Status -Event Information -Message "Disconnecting from Office 365.."
-    $exchangeSessionEnd = Disconnect-ExchangeOnline -Confirm:$false -Verbose:$false -ErrorAction Stop
-    Hid-Write-Status -Event Information -Message "Successfully disconnected from Office 365"
-}
-'@; 
-
-	$tmpVariables = @'
-[{"name":"identity","value":"{{form.gridUser.id}}","secret":false,"typeConstraint":"string"},{"name":"mailboxesToAdd","value":"{{form.permissionList.leftToRight.toJsonString}}","secret":false,"typeConstraint":"string"},{"name":"mailboxesToRemove","value":"{{form.permissionList.rightToLeft.toJsonString}}","secret":false,"typeConstraint":"string"},{"name":"permission","value":"{{form.permission}}","secret":false,"typeConstraint":"string"}]
+$tmpTask = @'
+{"name":"Exchange online - User - Manage permissions","script":"# Fixed values\r\n$AutoMapping = $false\r\n\r\n$permission = $form.permission\r\n$identity = $form.gridUser.id\r\n$mailboxesToAdd = $form.permissionList.leftToRight\r\n$mailboxesToRemove = $form.permissionList.rightToLeft\r\n\r\ntry {\r\n    # Set TLS to accept TLS, TLS 1.1 and TLS 1.2\r\n    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12\r\n\r\n    # Connect to Office 365\r\n    try {\r\n        $module = Import-Module ExchangeOnlineManagement\r\n\r\n        $securePassword = ConvertTo-SecureString $ExchangeOnlineAdminPassword -AsPlainText -Force\r\n        $credential = [System.Management.Automation.PSCredential]::new($ExchangeOnlineAdminUsername, $securePassword)\r\n\r\n        $exchangeSession = Connect-ExchangeOnline -Credential $credential -ShowBanner:$false -ShowProgress:$false -TrackPerformance:$false -ErrorAction Stop \r\n\r\n    }\r\n    catch {     \r\n        $Log = @{\r\n            Action            = \"UpdateAccount\" # optional. ENUM (undefined = default) \r\n            System            = \"Exchange On-Premise\" # optional (free format text) \r\n            Message           = \"Could not connect to Exchange Online, error: $_\" # required (free format text) \r\n            IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n            TargetDisplayName = $exchangeConnectionUri # optional (free format text) \r\n            TargetIdentifier  = $([string]$session.GUID) # optional (free format text) \r\n        }\r\n        #send result back  \r\n        Write-Information -Tags \"Audit\" -MessageData $log\r\n    }\r\n\r\n    $user = Get-User -Identity $identity -ErrorAction Stop\r\n    if ($user.Name.Count -eq 0) {\r\n        throw \"Could not find user with identity \u0027$($identity)\u0027\"\r\n    }\r\n\r\n    # Add permissions to users\r\n    try { \r\n        foreach ($mailbox in $mailboxesToAdd.id) {\r\n            if ($permission.ToLower() -eq \"fullaccess\") {\r\n                if ($AutoMapping) {\r\n                    Add-MailboxPermission -Identity $mailbox -AccessRights FullAccess -InheritanceType All -AutoMapping:$true -User $user.id -ErrorAction Stop\r\n                }\r\n                else {\r\n                    Add-MailboxPermission -Identity $mailbox -AccessRights FullAccess -InheritanceType All -AutoMapping:$false -User $user.id -ErrorAction Stop\r\n                }\r\n            }\r\n            elseif ($permission.ToLower() -eq \"sendas\") {\r\n                Add-RecipientPermission -Identity $mailbox -AccessRights SendAs -Confirm:$false -Trustee $User.id -ErrorAction Stop\r\n            }\r\n            elseif ($permission.ToLower() -eq \"sendonbehalf\") {\r\n                Set-Mailbox -Identity $mailbox -GrantSendOnBehalfTo @{add = \"$($user.id)\" } -Confirm:$false -ErrorAction Stop\r\n            }\r\n            else {\r\n                throw \"Could not match right \u0027$($permission)\u0027 to FullAccess, SendAs or SendOnBehalf\"\r\n            }\r\n\r\n            $Log = @{\r\n                Action            = \"UpdateAccount\" # optional. ENUM (undefined = default) \r\n                System            = \"Exchange Online\" # optional (free format text) \r\n                Message           = \"Successfully added permission $($permission) for user $($user.name) [$($user.guid)] to $mailbox\" # required (free format text) \r\n                IsError           = $false # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n                TargetDisplayName = $user.name # optional (free format text) \r\n                TargetIdentifier  = $user.GUID # optional (free format text) \r\n            }\r\n\r\n            Write-Information -Tags \"Audit\" -MessageData $log    \r\n\r\n        }\r\n    }\r\n    catch {\r\n        $Log = @{\r\n            Action            = \"UpdateAccount\" # optional. ENUM (undefined = default) \r\n            System            = \"Exchange Online\" # optional (free format text) \r\n            Message           = \"failed to add permission $($permission) for user $($user.name) [$($user.guid)] to $mailbox\" # required (free format text) \r\n            IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n            TargetDisplayName = $user.name # optional (free format text) \r\n            TargetIdentifier  = $user.GUID # optional (free format text) \r\n        }\r\n\r\n        Write-Information -Tags \"Audit\" -MessageData $log    \r\n        write-error \"Error adding permission $($permission) to user  $($user.name) [$($user.guid)] for $mailbox . Error: $_\"\r\n    }\r\n\r\n    # Remove permissions from users\r\n    try { \r\n\r\n        foreach ($mailbox in $mailboxesToRemove.id) {\r\n            if ($permission.ToLower() -eq \"fullaccess\") {\r\n                Remove-MailboxPermission -Identity $mailbox -AccessRights FullAccess -InheritanceType All -User $User.id -Confirm:$false -ErrorAction Stop\r\n            }\r\n            elseif ($permission.ToLower() -eq \"sendas\") {\r\n                Remove-RecipientPermission -Identity $mailbox -AccessRights SendAs -Confirm:$false -Trustee $User.id -ErrorAction Stop\r\n            }\r\n            elseif ($permission.ToLower() -eq \"sendonbehalf\") {\r\n                Set-Mailbox -Identity $mailbox -GrantSendOnBehalfTo @{remove = \"$($user.id)\" } -Confirm:$false -ErrorAction Stop\r\n            }\r\n            else {\r\n                throw \"Could not match right \u0027$($permission)\u0027 to FullAccess, SendAs or SendOnBehalf\"\r\n            }\r\n\r\n            $Log = @{\r\n                Action            = \"UpdateAccount\" # optional. ENUM (undefined = default) \r\n                System            = \"Exchange Online\" # optional (free format text) \r\n                Message           = \"Successfully removed permission $($permission) for user $($user.name) [$($user.guid)] from $mailbox\" # required (free format text) \r\n                IsError           = $false # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n                TargetDisplayName = $user.name # optional (free format text) \r\n                TargetIdentifier  = $user.GUID # optional (free format text) \r\n            }\r\n\r\n            Write-Information -Tags \"Audit\" -MessageData $log    \r\n\r\n        }\r\n    }\r\n    catch {\r\n        $Log = @{\r\n            Action            = \"UpdateAccount\" # optional. ENUM (undefined = default) \r\n            System            = \"Exchange Online\" # optional (free format text) \r\n            Message           = \"failed removing permission $($permission) for user $($user.name) [$($user.guid)] from $mailbox\" # required (free format text) \r\n            IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n            TargetDisplayName = $user.name # optional (free format text) \r\n            TargetIdentifier  = $user.GUID # optional (free format text) \r\n        }\r\n\r\n        Write-Information -Tags \"Audit\" -MessageData $log \r\n        write-error \"Error removing permission $($permission) for user $($user.name) [$($user.guid)] from $mailbox . Error: $_\"\r\n    } \r\n}\r\ncatch {\r\n    $Log = @{\r\n        Action            = \"UpdateAccount\" # optional. ENUM (undefined = default) \r\n        System            = \"Exchange Online\" # optional (free format text) \r\n        Message           = \"error updating permission $($permission) for user $($user.name) [$($user.guid)] to $mailbox\" # required (free format text) \r\n        IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n        TargetDisplayName = $user.name # optional (free format text) \r\n        TargetIdentifier  = $user.GUID # optional (free format text) \r\n    }\r\n\r\n    Write-Information -Tags \"Audit\" -MessageData $log    \r\n    write-error \"Error updating permissions for $($user.name) [$($user.guid)] for $mailbox. Error: $_\"\r\n\r\n}\r\nfinally {\r\n    $exchangeSessionEnd = Disconnect-ExchangeOnline -Confirm:$false -Verbose:$false -ErrorAction Stop\r\n}","runInCloud":false}
 '@ 
 
-	$delegatedFormTaskGuid = [PSCustomObject]@{} 
-$delegatedFormTaskName = @'
-exchange-online-user-manage-permissions-set
-'@
-	Invoke-HelloIDAutomationTask -TaskName $delegatedFormTaskName -UseTemplate "False" -AutomationContainer "8" -Variables $tmpVariables -PowershellScript $tmpScript -ObjectGuid $delegatedFormRef.guid -ForceCreateTask $true -returnObject ([Ref]$delegatedFormTaskGuid) 
-} else {
-	Write-Warning "Delegated form '$delegatedFormName' already exists. Nothing to do with the Delegated Form task..." 
-}
-<# End: Delegated Form Task #>
+Invoke-HelloIDDelegatedForm -DelegatedFormName $delegatedFormName -DynamicFormGuid $dynamicFormGuid -AccessGroups $delegatedFormAccessGroupGuids -Categories $delegatedFormCategoryGuids -UseFaIcon "True" -FaIcon "fa fa-pencil-square-o" -task $tmpTask -returnObject ([Ref]$delegatedFormRef) 
+<# End: Delegated Form #>
+
