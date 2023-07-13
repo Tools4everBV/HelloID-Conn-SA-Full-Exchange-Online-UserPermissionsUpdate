@@ -23,7 +23,7 @@ try {
     catch {     
         $Log = @{
             Action            = "UpdateAccount" # optional. ENUM (undefined = default) 
-            System            = "Exchange On-Premise" # optional (free format text) 
+            System            = "Exchange Online" # optional (free format text) 
             Message           = "Could not connect to Exchange Online, error: $_" # required (free format text) 
             IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) 
             TargetDisplayName = $exchangeConnectionUri # optional (free format text) 
